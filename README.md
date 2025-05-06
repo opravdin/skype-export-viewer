@@ -1,4 +1,4 @@
-н# Skype Export Viewer
+# Skype Export Viewer
 
 *[Русская версия](README.ru.md)*
 
