@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skype Export Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #0078d4;
+            --secondary-color: #f0f0f0;
+            --border-color: #e0e0e0;
+            --text-color: #333;
+            --hover-color: #f5f5f5;
+            --message-bg: #f9f9f9;
+            --message-sent-bg: #e1f5fe;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            color: var(--text-color);
+            background-color: #fff;
+        }
+        
+        #top {
+            padding: 15px;
+            background-color: var(--primary-color);
+            color: white;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        
+        #fileInput {
+            background-color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            color: var(--text-color);
+        }
+        
+        #main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        #conversations {
+            width: 300px;
+            border-right: 1px solid var(--border-color);
+            overflow-y: auto;
+            background-color: var(--secondary-color);
+        }
+        
+        .conversation {
+            cursor: pointer;
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.2s;
+        }
+        
+        .conversation:hover {
+            background-color: var(--hover-color);
+        }
+        
+        .conversation.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        #messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: white;
+        }
+        
+        .message {
+            margin: 15px 0;
+            padding: 12px 15px;
+            border-radius: 8px;
+            background-color: var(--message-bg);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            max-width: 80%;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        
+        .message-sender {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+        
+        .message-content {
+            line-height: 1.4;
+        }
+        
+        .media-container {
+            position: relative;
+            margin-top: 10px;
+        }
+        
+        .media-container img, 
+        .media-container video {
+            max-width: 300px;
+            max-height: 200px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .media-container img:hover, 
+        .media-container video:hover {
+            transform: scale(1.02);
+        }
+        
+        .fullscreen-icon {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .media-container:hover .fullscreen-icon {
+            opacity: 1;
+        }
+        
+        /* Modal/Lightbox for fullscreen view */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        
+        .modal-content img,
+        .modal-content video {
+            max-width: 100%;
+            max-height: 90vh;
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: white;
+            font-size: 30px;
+            cursor: pointer;
+        }
+        
+        .no-messages {
+            display: flex;
+            height: 100%;
+            justify-content: center;
+            align-items: center;
+            color: #999;
+            font-style: italic;
+        }
+        
+        .app-title {
+            margin-left: 10px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="top">
+        <input type="file" id="fileInput" accept="application/json">
+        <div class="app-title">Skype Export Viewer</div>
+    </div>
+    <div id="main">
+        <div id="conversations"></div>
+        <div id="messages" class="no-messages">
+            <em>Select a conversation or load a file</em>
+        </div>
+    </div>
+    
+    <!-- Modal for fullscreen view -->
+    <div id="mediaModal" class="modal">
+        <span class="close-modal">&times;</span>
+        <div class="modal-content" id="modalContent"></div>
+    </div>
+
+    <script>
+        let data;
+        let activeConversation = null;
+        let contactsMap = {}; // Map to store contacts data
+
+        // Load contacts.csv on page load
+        fetch('contacts.csv')
+            .then(response => response.text())
+            .then(csvText => {
+                parseContacts(csvText);
+            })
+            .catch(error => {
+                console.error('Error loading contacts:', error);
+            });
+
+        // Parse contacts CSV and create a mapping
+        function parseContacts(csvText) {
+            const lines = csvText.split('\n');
+            const headers = lines[0].split(',');
+            
+            // Find the index of id and display_name columns
+            const idIndex = headers.indexOf('id');
+            const displayNameIndex = headers.indexOf('display_name');
+            
+            if (idIndex === -1 || displayNameIndex === -1) return;
+            
+            // Create mapping of id to display_name
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                
+                const columns = lines[i].split(',');
+                const id = columns[idIndex].trim();
+                const displayName = columns[displayNameIndex].trim();
+                
+                if (id && displayName) {
+                    contactsMap[id] = displayName;
+                }
+            }
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    data = JSON.parse(e.target.result);
+                    renderConversations();
+                    document.getElementById('messages').innerHTML = '<div class="no-messages"><em>Select a conversation</em></div>';
+                } catch (error) {
+                    alert('Error parsing the file: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        function renderConversations() {
+            const container = document.getElementById('conversations');
+            container.innerHTML = '';
+            
+            if (!data || !data.conversations || data.conversations.length === 0) {
+                container.innerHTML = '<div class="conversation">No conversations found</div>';
+                return;
+            }
+            
+            data.conversations.forEach((conv, index) => {
+                const div = document.createElement('div');
+                div.className = 'conversation';
+                
+                // Get conversation name with priority for private conversations
+                let displayName = '';
+                
+                // Check if it's a private conversation (1:1 chat)
+                if (conv.id.startsWith('8:') || conv.id.includes('@')) {
+                    // Extract the Skype ID from the conversation ID
+                    const skypeId = conv.id.split(':')[1];
+                    
+                    // Try to find the contact in our contacts map
+                    if (contactsMap[skypeId]) {
+                        displayName = contactsMap[skypeId];
+                    } else if (contactsMap[conv.id]) {
+                        displayName = contactsMap[conv.id];
+                    }
+                }
+                
+                // If no contact name found, fall back to the original logic
+                if (!displayName) {
+                    displayName = conv.threadProperties?.topic || conv.displayName || conv.id;
+                }
+                
+                div.textContent = displayName;
+                div.onclick = () => {
+                    // Remove active class from all conversations
+                    document.querySelectorAll('.conversation').forEach(el => {
+                        el.classList.remove('active');
+                    });
+                    
+                    // Add active class to clicked conversation
+                    div.classList.add('active');
+                    activeConversation = conv;
+                    renderMessages(conv);
+                };
+                container.appendChild(div);
+            });
+        }
+
+        function decodeHtml(html) {
+            const txt = document.createElement('textarea');
+            txt.innerHTML = html;
+            return txt.value;
+        }
+
+        function renderMessages(conversation) {
+            const container = document.getElementById('messages');
+            container.innerHTML = '';
+            container.className = 'messages';
+            
+            if (!conversation.MessageList || conversation.MessageList.length === 0) {
+                container.innerHTML = '<div class="no-messages"><em>No messages in this conversation</em></div>';
+                return;
+            }
+            
+            conversation.MessageList.forEach(msg => {
+                const div = document.createElement('div');
+                div.className = 'message';
+                
+                const header = document.createElement('div');
+                header.className = 'message-header';
+                
+                const sender = document.createElement('span');
+                sender.className = 'message-sender';
+                
+                // First try to use the displayName from the message if it exists
+                let senderName = msg.displayName || msg.from || 'Unknown';
+                
+                // If no displayName, try to get the sender's name from contacts
+                if (!msg.displayName && msg.from && (msg.from.startsWith('8:') || msg.from.includes('@'))) {
+                    const skypeId = msg.from.split(':')[1];
+                    
+                    // Try to find the contact in our contacts map
+                    if (contactsMap[skypeId]) {
+                        senderName = contactsMap[skypeId];
+                    } else if (contactsMap[msg.from]) {
+                        senderName = contactsMap[msg.from];
+                    }
+                }
+                
+                sender.textContent = senderName;
+                
+                const time = document.createElement('span');
+                time.className = 'message-time';
+                time.textContent = new Date(msg.originalarrivaltime).toLocaleString();
+                
+                header.appendChild(sender);
+                header.appendChild(time);
+                
+                const content = document.createElement('div');
+                content.className = 'message-content';
+                
+                if (msg.messagetype === "RichText/UriObject") {
+                    content.innerHTML = renderMediaMessage(msg);
+                } else if (msg.messagetype === "Event/Call") {
+                    content.innerHTML = renderCallEvent(msg);
+                } else if (msg.messagetype === "ThreadActivity/AddMember") {
+                    content.innerHTML = renderThreadActivity(msg);
+                } else if (msg.content && msg.content.includes("<deletemember>")) {
+                    content.innerHTML = renderDeleteMember(msg);
+                } else if (msg.content && msg.content.includes("<topicupdate>")) {
+                    content.innerHTML = renderTopicUpdate(msg);
+                } else if (msg.content && msg.content.includes("<pictureupdate>")) {
+                    content.innerHTML = renderPictureUpdate(msg);
+                } else if (msg.content && msg.content.includes("<historydisclosedupdate>")) {
+                    content.innerHTML = renderHistoryDisclosedUpdate(msg);
+                } else if (msg.messagetype === "RichText" && msg.content.includes("<quote")) {
+                    content.innerHTML = renderRichTextWithQuote(msg);
+                } else if (msg.content && msg.content.includes("<e_m ")) {
+                    content.innerHTML = renderEditedMessage(msg);
+                } else if (msg.content && msg.content.includes("<a href=")) {
+                    content.innerHTML = msg.content;
+                } else if (msg.content && msg.content.includes("<URIObject type=\"Poll\"")) {
+                    content.innerHTML = renderPoll(msg);
+                } else if (msg.content && msg.content.includes("<URIObject type=\"File")) {
+                    content.innerHTML = renderFileShare(msg);
+                } else {
+                    content.textContent = decodeHtml(msg.content);
+                }
+                
+                div.appendChild(header);
+                div.appendChild(content);
+                container.appendChild(div);
+            });
+            
+            // Scroll to the bottom of the messages
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function renderMediaMessage(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let uriObj = xmlDoc.getElementsByTagName("URIObject")[0];
+
+            if (!uriObj) return decodeHtml(msg.content);
+
+            let docId = uriObj.getAttribute("doc_id");
+            let type = uriObj.getAttribute("type");
+
+            let html = '<div class="media-container">';
+
+            if (type && type.startsWith("Picture")) {
+                html += `<img src="media/${docId}.1.png" alt="Image" onclick="openModal(this.src, 'image')">`;
+                html += `<div class="fullscreen-icon" onclick="openModal('media/${docId}.1.png', 'image')"><i class="fas fa-expand"></i></div>`;
+            } else if (type && type.startsWith("Video")) {
+                html += `<video controls src="media/${docId}.1.mp4" onclick="openModal(this.src, 'video')"></video>`;
+                html += `<div class="fullscreen-icon" onclick="openModal('media/${docId}.1.mp4', 'video')"><i class="fas fa-expand"></i></div>`;
+                
+                // Check if preview image exists
+                const img = new Image();
+                img.src = `media/${docId}.2.jpeg`;
+                if (img.complete) {
+                    html += `<img src="media/${docId}.2.jpeg" alt="Preview" style="margin-top: 5px;">`;
+                }
+            } else {
+                html = decodeHtml(msg.content);  // fallback
+            }
+            
+            html += '</div>';
+            return html;
+        }
+
+        function renderCallEvent(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let partlist = xmlDoc.getElementsByTagName("partlist")[0];
+            
+            if (!partlist) return decodeHtml(msg.content);
+            
+            const callType = partlist.getAttribute("type");
+            const parts = partlist.getElementsByTagName("part");
+            
+            let html = '<div class="call-event">';
+            
+            // Add appropriate icon based on call type
+            if (callType === "missed") {
+                html += '<i class="fas fa-phone-slash" style="color: #e74c3c; margin-right: 8px;"></i>';
+                html += 'Missed call';
+            } else if (callType === "started") {
+                html += '<i class="fas fa-phone" style="color: #2ecc71; margin-right: 8px;"></i>';
+                html += 'Call started';
+            } else if (callType === "ended") {
+                html += '<i class="fas fa-phone-alt" style="color: #3498db; margin-right: 8px;"></i>';
+                
+                // Check if duration is available
+                let duration = null;
+                for (let i = 0; i < parts.length; i++) {
+                    const durationElement = parts[i].getElementsByTagName("duration")[0];
+                    if (durationElement) {
+                        duration = parseFloat(durationElement.textContent);
+                        break;
+                    }
+                }
+                
+                if (duration) {
+                    const minutes = Math.floor(duration / 60);
+                    const seconds = Math.floor(duration % 60);
+                    html += `Call ended (Duration: ${minutes}:${seconds.toString().padStart(2, '0')})`;
+                } else {
+                    html += 'Call ended';
+                }
+            } else {
+                html += `Call (${callType})`;
+            }
+            
+            // Add participants
+            html += '<div class="call-participants" style="margin-top: 5px; font-size: 0.9em; color: #666;">';
+            html += 'Participants: ';
+            
+            for (let i = 0; i < parts.length; i++) {
+                const name = parts[i].getElementsByTagName("name")[0]?.textContent || "Unknown";
+                html += `<span>${name}</span>`;
+                if (i < parts.length - 1) html += ', ';
+            }
+            
+            html += '</div></div>';
+            return html;
+        }
+        
+        function renderThreadActivity(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let addMember = xmlDoc.getElementsByTagName("addmember")[0];
+            
+            if (!addMember) return decodeHtml(msg.content);
+            
+            const initiator = addMember.getElementsByTagName("initiator")[0]?.textContent || "Someone";
+            const targets = addMember.getElementsByTagName("target");
+            
+            let html = '<div class="thread-activity" style="font-style: italic; color: #666;">';
+            html += '<i class="fas fa-user-plus" style="margin-right: 8px;"></i>';
+            
+            // Simplify the initiator ID
+            const simplifiedInitiator = initiator.split(':').pop();
+            
+            if (targets.length === 1) {
+                const target = targets[0].textContent.split(':').pop();
+                html += `${simplifiedInitiator} added ${target} to the conversation`;
+            } else {
+                html += `${simplifiedInitiator} added ${targets.length} people to the conversation`;
+            }
+            
+            html += '</div>';
+            return html;
+        }
+        
+        function renderRichTextWithQuote(msg) {
+            let content = msg.content;
+            
+            // Check if the message contains a quote
+            if (content.includes("<quote")) {
+                // Extract quote parts
+                const quoteRegex = /<quote.*?<\/quote>/s;
+                const quoteMatch = content.match(quoteRegex);
+                
+                if (quoteMatch) {
+                    const quoteContent = quoteMatch[0];
+                    
+                    // Extract author name
+                    const authorNameRegex = /authorname="([^"]*)"/;
+                    const authorNameMatch = quoteContent.match(authorNameRegex);
+                    const authorName = authorNameMatch ? authorNameMatch[1] : "Someone";
+                    
+                    // Extract quoted text - everything between the last </legacyquote> and the final </quote>
+                    const quotedTextRegex = /<legacyquote>.*?<\/legacyquote>(.*?)<\/quote>/s;
+                    const quotedTextMatch = quoteContent.match(quotedTextRegex);
+                    let quotedText = quotedTextMatch ? quotedTextMatch[1].trim() : "";
+                    
+                    // Remove any HTML tags from the quoted text
+                    quotedText = quotedText.replace(/<[^>]*>/g, '');
+                    
+                    // Create the styled quote
+                    const styledQuote = `
+                        <div class="quoted-message" style="
+                            background-color: #f0f0f0;
+                            border-left: 4px solid #0078d4;
+                            padding: 8px 12px;
+                            margin-bottom: 10px;
+                            border-radius: 4px;
+                            font-size: 0.9em;
+                        ">
+                            <div style="font-weight: bold; margin-bottom: 4px; color: #0078d4;">
+                                ${authorName}
+                            </div>
+                            <div>${quotedText}</div>
+                        </div>
+                    `;
+                    
+                    // Replace the quote with our styled version
+                    content = content.replace(quoteMatch[0], styledQuote);
+                    
+                    // Remove any remaining HTML tags from the rest of the content
+                    const remainingContent = content.replace(styledQuote, '').trim();
+                    
+                    return styledQuote + decodeHtml(remainingContent);
+                }
+            }
+            
+            return decodeHtml(content);
+        }
+        
+        function renderDeleteMember(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let deleteMember = xmlDoc.getElementsByTagName("deletemember")[0];
+            
+            if (!deleteMember) return decodeHtml(msg.content);
+            
+            const initiator = deleteMember.getElementsByTagName("initiator")[0]?.textContent || "Someone";
+            const target = deleteMember.getElementsByTagName("target")[0]?.textContent || "someone";
+            
+            let html = '<div class="thread-activity" style="font-style: italic; color: #666;">';
+            html += '<i class="fas fa-user-minus" style="margin-right: 8px; color: #e74c3c;"></i>';
+            
+            // Simplify the IDs
+            const simplifiedInitiator = initiator.split(':').pop();
+            const simplifiedTarget = target.split(':').pop();
+            
+            html += `${simplifiedInitiator} removed ${simplifiedTarget} from the conversation`;
+            html += '</div>';
+            return html;
+        }
+        
+        function renderTopicUpdate(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let topicUpdate = xmlDoc.getElementsByTagName("topicupdate")[0];
+            
+            if (!topicUpdate) return decodeHtml(msg.content);
+            
+            const initiator = topicUpdate.getElementsByTagName("initiator")[0]?.textContent || "Someone";
+            const value = topicUpdate.getElementsByTagName("value")[0]?.textContent || "";
+            
+            let html = '<div class="thread-activity" style="font-style: italic; color: #666;">';
+            html += '<i class="fas fa-edit" style="margin-right: 8px; color: #3498db;"></i>';
+            
+            // Simplify the initiator ID
+            const simplifiedInitiator = initiator.split(':').pop();
+            
+            html += `${simplifiedInitiator} changed the conversation topic to "${value}"`;
+            html += '</div>';
+            return html;
+        }
+        
+        function renderPictureUpdate(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let pictureUpdate = xmlDoc.getElementsByTagName("pictureupdate")[0];
+            
+            if (!pictureUpdate) return decodeHtml(msg.content);
+            
+            const initiator = pictureUpdate.getElementsByTagName("initiator")[0]?.textContent || "Someone";
+            
+            let html = '<div class="thread-activity" style="font-style: italic; color: #666;">';
+            html += '<i class="fas fa-image" style="margin-right: 8px; color: #2ecc71;"></i>';
+            
+            // Simplify the initiator ID
+            const simplifiedInitiator = initiator.split(':').pop();
+            
+            html += `${simplifiedInitiator} changed the conversation picture`;
+            html += '</div>';
+            return html;
+        }
+        
+        function renderHistoryDisclosedUpdate(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let historyUpdate = xmlDoc.getElementsByTagName("historydisclosedupdate")[0];
+            
+            if (!historyUpdate) return decodeHtml(msg.content);
+            
+            const initiator = historyUpdate.getElementsByTagName("initiator")[0]?.textContent || "Someone";
+            const value = historyUpdate.getElementsByTagName("value")[0]?.textContent || "false";
+            
+            let html = '<div class="thread-activity" style="font-style: italic; color: #666;">';
+            html += '<i class="fas fa-history" style="margin-right: 8px; color: #9b59b6;"></i>';
+            
+            // Simplify the initiator ID
+            const simplifiedInitiator = initiator.split(':').pop();
+            
+            if (value === "true") {
+                html += `${simplifiedInitiator} made chat history visible to everyone`;
+            } else {
+                html += `${simplifiedInitiator} made chat history visible to admins only`;
+            }
+            
+            html += '</div>';
+            return html;
+        }
+        
+        function renderEditedMessage(msg) {
+            let content = msg.content;
+            
+            // Check if the message contains an edit marker
+            if (content.includes("<e_m ")) {
+                // Extract the edit marker
+                const editRegex = /<e_m.*?><\/e_m>/;
+                const editMatch = content.match(editRegex);
+                
+                if (editMatch) {
+                    // Remove the edit marker
+                    content = content.replace(editMatch[0], '');
+                    
+                    // Add an "edited" indicator
+                    return `${decodeHtml(content)} <span style="font-size: 0.8em; color: #999; font-style: italic;">(edited)</span>`;
+                }
+            }
+            
+            return decodeHtml(content);
+        }
+        
+        function renderPoll(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let uriObj = xmlDoc.getElementsByTagName("URIObject")[0];
+            
+            if (!uriObj || uriObj.getAttribute("type") !== "Poll") return decodeHtml(msg.content);
+            
+            const title = uriObj.getAttribute("title") || "Poll";
+            const options = uriObj.getAttribute("optionsEncoded") || "";
+            
+            // Decode the URL-encoded options
+            const decodedOptions = options.split('|').map(option => decodeURIComponent(option));
+            
+            let html = `
+                <div class="poll-container" style="
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                    padding: 12px;
+                    background-color: #f9f9f9;
+                ">
+                    <div style="font-weight: bold; margin-bottom: 8px;">
+                        <i class="fas fa-poll" style="margin-right: 8px; color: #3498db;"></i>
+                        ${title}
+                    </div>
+                    <div class="poll-options">
+            `;
+            
+            decodedOptions.forEach(option => {
+                html += `
+                    <div class="poll-option" style="
+                        margin: 5px 0;
+                        padding: 8px;
+                        background-color: #fff;
+                        border-radius: 4px;
+                        border: 1px solid #eee;
+                    ">
+                        ${option}
+                    </div>
+                `;
+            });
+            
+            html += `
+                    </div>
+                    <div style="font-size: 0.8em; color: #999; margin-top: 8px; font-style: italic;">
+                        This poll is from the original Skype conversation and is not interactive in this viewer.
+                    </div>
+                </div>
+            `;
+            
+            return html;
+        }
+        
+        function renderFileShare(msg) {
+            let parser = new DOMParser();
+            let xmlDoc = parser.parseFromString(msg.content, "text/xml");
+            let uriObj = xmlDoc.getElementsByTagName("URIObject")[0];
+            
+            if (!uriObj || !uriObj.getAttribute("type").startsWith("File")) return decodeHtml(msg.content);
+            
+            const title = uriObj.getElementsByTagName("Title")[0]?.textContent || "File";
+            const description = uriObj.getElementsByTagName("Description")[0]?.textContent || "";
+            const fileSize = uriObj.getElementsByTagName("FileSize")[0]?.getAttribute("v") || "";
+            const originalName = uriObj.getElementsByTagName("OriginalName")[0]?.getAttribute("v") || title;
+            
+            // Format file size
+            let formattedSize = "";
+            if (fileSize) {
+                const size = parseInt(fileSize);
+                if (size < 1024) {
+                    formattedSize = `${size} B`;
+                } else if (size < 1024 * 1024) {
+                    formattedSize = `${(size / 1024).toFixed(1)} KB`;
+                } else if (size < 1024 * 1024 * 1024) {
+                    formattedSize = `${(size / (1024 * 1024)).toFixed(1)} MB`;
+                } else {
+                    formattedSize = `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+                }
+            }
+            
+            let html = `
+                <div class="file-share" style="
+                    border: 1px solid #ddd;
+                    border-radius: 8px;
+                    padding: 12px;
+                    background-color: #f9f9f9;
+                    display: flex;
+                    align-items: center;
+                ">
+                    <div style="font-size: 24px; margin-right: 12px; color: #3498db;">
+                        <i class="fas fa-file"></i>
+                    </div>
+                    <div>
+                        <div style="font-weight: bold;">${originalName}</div>
+                        ${description ? `<div style="color: #666; margin-top: 4px;">${description}</div>` : ''}
+                        ${formattedSize ? `<div style="font-size: 0.8em; color: #999; margin-top: 4px;">${formattedSize}</div>` : ''}
+                        <div style="font-size: 0.8em; color: #999; margin-top: 4px; font-style: italic;">
+                            This file was shared in the original Skype conversation and is not available in this viewer.
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return html;
+        }
+        
+        // Modal functionality for fullscreen view
+        const modal = document.getElementById('mediaModal');
+        const modalContent = document.getElementById('modalContent');
+        const closeModal = document.querySelector('.close-modal');
+        
+        function openModal(src, type) {
+            modalContent.innerHTML = '';
+            
+            if (type === 'image') {
+                const img = document.createElement('img');
+                img.src = src;
+                modalContent.appendChild(img);
+            } else if (type === 'video') {
+                const video = document.createElement('video');
+                video.src = src;
+                video.controls = true;
+                video.autoplay = true;
+                modalContent.appendChild(video);
+            }
+            
+            modal.style.display = 'flex';
+        }
+        
+        closeModal.onclick = function() {
+            modal.style.display = 'none';
+            modalContent.innerHTML = '';
+        }
+        
+        // Close modal when clicking outside of content
+        window.onclick = function(event) {
+            if (event.target === modal) {
+                modal.style.display = 'none';
+                modalContent.innerHTML = '';
+            }
+        }
+        
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+                modalContent.innerHTML = '';
+            }
+        });
+    </script>
+</body>
+</html>
